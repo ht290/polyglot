@@ -98,7 +98,7 @@ public class DynamicGrpcClient {
     ClientCalls.asyncServerStreamingCall(
         channel.newCall(createGrpcMethodDescriptor(), CallOptions.DEFAULT),
         request,
-        CompositeStreamObserver.of(doneObserver, streamObserver));
+        CompositeStreamObserver.of(streamObserver, doneObserver));
     return submitWaitTask(doneObserver);
   }
 
@@ -109,13 +109,13 @@ public class DynamicGrpcClient {
         request);
 
     DoneObserver<DynamicMessage> doneObserver = new DoneObserver<>();
-    UnaryStreamCallback<DynamicMessage> callback =
-        new UnaryStreamCallback<>(CompositeStreamObserver.of(doneObserver, streamObserver));
+    UnaryStreamCallback<DynamicMessage> callback = new UnaryStreamCallback<>(
+        CompositeStreamObserver.of(streamObserver, doneObserver));
     Futures.addCallback(response, callback);
-
     return submitWaitTask(doneObserver);
   }
 
+  /** Returns a {@ListenableFuture} which completes when the supplied observer is done. */
   private ListenableFuture<Void> submitWaitTask(DoneObserver<?> doneObserver) {
     return executor.submit(new Callable<Void>() {
       @Override
