@@ -9,27 +9,27 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 import java.util.logging.LogManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.bridge.SLF4JBridgeHandler;
 
-import polyglot.ProtocInvoker.ProtocInvocationException;
-import polyglot.oauth2.RefreshTokenCredentials;
-
 import com.google.auth.Credentials;
 import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableList;
 import com.google.common.io.CharStreams;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.TextFormat;
 import com.google.protobuf.TextFormat.ParseException;
+
+import io.grpc.stub.StreamObserver;
+import polyglot.ProtocInvoker.ProtocInvocationException;
+import polyglot.oauth2.RefreshTokenCredentials;
 
 public class Main {
   private static final Logger logger = LoggerFactory.getLogger(Main.class);
@@ -70,17 +70,33 @@ public class Main {
     DynamicMessage requestMessage = getProtoFromStdin(methodDescriptor.getInputType());
 
     logger.info("Making rpc call to endpoint: " + arguments.endpoint());
-    ListenableFuture<DynamicMessage> callFuture = dynamicClient.call(requestMessage);
-    Optional<DynamicMessage> response = Optional.empty();
-    try {
-      response = Optional.of(callFuture.get());
-      logger.info("Rpc succeeded, got response: " + response.get());
-    } catch (ExecutionException | InterruptedException e) {
-      logger.error("Rpc failed", e);
-    }
+    ImmutableList.Builder<DynamicMessage> responsesBuilder = ImmutableList.builder();
+    dynamicClient.call(requestMessage, new StreamObserver<DynamicMessage>() {
+      @Override
+      public void onNext(DynamicMessage response) {
+        logger.info("Got rpc response: " + response);
+        responsesBuilder.add(response);
+      }
 
-    if (response.isPresent() && arguments.outputPath().isPresent()) {
-      writeToFile(arguments.outputPath().get(), response.get().toString());
+      @Override
+      public void onError(Throwable t) {
+        logger.info("Got rpc error: ", t);
+      }
+
+      @Override
+      public void onCompleted() {
+        logger.info("Rpc completed successfully");
+      }
+    });
+    ImmutableList<DynamicMessage> responses = responsesBuilder.build();
+
+    if (arguments.outputPath().isPresent()) {
+      if (responses.size() != 1) {
+        logger.warn(
+            "Got unexpected number of responses, skipping write to file: " + responses.size());
+      } else {
+        writeToFile(arguments.outputPath().get(), responses.get(0).toString());
+      }
     }
   }
 
