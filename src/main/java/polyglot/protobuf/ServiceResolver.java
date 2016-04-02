@@ -1,4 +1,4 @@
-package polyglot;
+package polyglot.protobuf;
 
 import java.util.Arrays;
 import java.util.HashMap;

@@ -1,15 +1,18 @@
-package polyglot;
+package polyglot.grpc;
 
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
 import javax.net.ssl.SSLException;
 
 import com.google.auth.Credentials;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.net.HostAndPort;
-import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 
@@ -24,17 +27,21 @@ import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.ClientCalls;
 import io.grpc.stub.StreamObserver;
 import io.netty.handler.ssl.SslContext;
+import polyglot.protobuf.DynamicMessageMarshaller;
 
 /** A grpc client which operates on dynamic messages. */
 public class DynamicGrpcClient {
   private final MethodDescriptor protoMethodDescriptor;
   private final Channel channel;
+  private final ListeningExecutorService executor;
 
   /** Creates a client for the supplied method, talking to the supplied endpoint. */
   public static DynamicGrpcClient create(
-      MethodDescriptor protoMethod, HostAndPort endpoint, boolean useTls) {
+      MethodDescriptor protoMethod,
+      HostAndPort endpoint,
+      boolean useTls) {
     Channel channel = useTls ? createTlsChannel(endpoint) : createPlaintextChannel(endpoint);
-    return new DynamicGrpcClient(protoMethod, channel);
+    return new DynamicGrpcClient(protoMethod, channel, createExecutorService());
   }
 
   /**
@@ -46,40 +53,79 @@ public class DynamicGrpcClient {
       HostAndPort endpoint,
       boolean useTls,
       Credentials credentials) {
-    ExecutorService executor = Executors.newCachedThreadPool();
+    ListeningExecutorService executor = createExecutorService();
     Channel channel = useTls ? createTlsChannel(endpoint) : createPlaintextChannel(endpoint);
     return new DynamicGrpcClient(
         protoMethod,
-        ClientInterceptors.intercept(channel, new ClientAuthInterceptor(credentials, executor)));
+        ClientInterceptors.intercept(channel, new ClientAuthInterceptor(credentials, executor)),
+        executor);
   }
 
-  private DynamicGrpcClient(MethodDescriptor protoMethodDescriptor, Channel channel) {
+  /**
+   * Returns an executor in daemon-mode, allowing callers to actively decide whether they want to
+   * wait for rpc streams to complete.
+   */
+  private static ListeningExecutorService createExecutorService() {
+    return MoreExecutors.listeningDecorator(
+        Executors.newCachedThreadPool(new ThreadFactoryBuilder().setDaemon(true).build()));
+  }
+
+  @VisibleForTesting
+  DynamicGrpcClient(
+      MethodDescriptor protoMethodDescriptor, Channel channel, ListeningExecutorService executor) {
     this.protoMethodDescriptor = protoMethodDescriptor;
     this.channel = channel;
+    this.executor = executor;
   }
 
-  /** Makes an rpc to the remote endpoint and returns the response. */
-  public void call(DynamicMessage request, StreamObserver<DynamicMessage> streamObserver) {
+  /**
+   * Makes an rpc to the remote endpoint and respects the supplied callback. Returns a future which
+   * can be waited on so that
+   */
+  public ListenableFuture<Void> call(
+      DynamicMessage request, StreamObserver<DynamicMessage> streamObserver) {
     MethodType methodType = getMethodType();
     if (methodType == MethodType.UNARY) {
-
-      System.out.println(">>>>> making unary call");
-
-
-      ListenableFuture<DynamicMessage> response = ClientCalls.futureUnaryCall(
-          channel.newCall(createGrpcMethodDescriptor(), CallOptions.DEFAULT),
-          request);
-      Futures.addCallback(response, new SingletonStreamCallback<DynamicMessage>(streamObserver));
+      return callUnary(request, streamObserver);
     } else {
-
-      System.out.println(">>>>> making streaming call");
-
-
-      ClientCalls.asyncServerStreamingCall(
-          channel.newCall(createGrpcMethodDescriptor(), CallOptions.DEFAULT),
-          request,
-          streamObserver);
+      return callServerStreaming(request, streamObserver);
     }
+  }
+
+  private ListenableFuture<Void> callServerStreaming(
+      DynamicMessage request, StreamObserver<DynamicMessage> streamObserver) {
+    DoneObserver<DynamicMessage> doneObserver = new DoneObserver<>();
+    ClientCalls.asyncServerStreamingCall(
+        channel.newCall(createGrpcMethodDescriptor(), CallOptions.DEFAULT),
+        request,
+        CompositeStreamObserver.of(doneObserver, streamObserver));
+    return submitWaitTask(doneObserver);
+  }
+
+  private ListenableFuture<Void> callUnary(
+      DynamicMessage request, StreamObserver<DynamicMessage> streamObserver) {
+    ListenableFuture<DynamicMessage> response = ClientCalls.futureUnaryCall(
+        channel.newCall(createGrpcMethodDescriptor(), CallOptions.DEFAULT),
+        request);
+
+    DoneObserver<DynamicMessage> doneObserver = new DoneObserver<>();
+    UnaryStreamCallback<DynamicMessage> callback =
+        new UnaryStreamCallback<>(CompositeStreamObserver.of(doneObserver, streamObserver));
+    Futures.addCallback(response, callback);
+
+    return submitWaitTask(doneObserver);
+  }
+
+  private ListenableFuture<Void> submitWaitTask(DoneObserver<?> doneObserver) {
+    return executor.submit(new Callable<Void>() {
+      @Override
+      public Void call() throws Exception {
+        synchronized (doneObserver) {
+          doneObserver.wait();
+        }
+        return null;
+      }
+    });
   }
 
   private io.grpc.MethodDescriptor<DynamicMessage, DynamicMessage> createGrpcMethodDescriptor() {
@@ -129,28 +175,5 @@ public class DynamicGrpcClient {
         .sslContext(sslContext)
         .negotiationType(NegotiationType.TLS)
         .build();
-  }
-
-  /**
-   * A {@link FutureCallback} which provides an adapter from a future to a stream with a single
-   * response.
-   */
-  private static class SingletonStreamCallback<T> implements FutureCallback<T> {
-    private final StreamObserver<T> streamObserver;
-
-    private SingletonStreamCallback(StreamObserver<T> streamObserver) {
-      this.streamObserver = streamObserver;
-    }
-
-    @Override
-    public void onFailure(Throwable t) {
-      streamObserver.onError(t);
-    }
-
-    @Override
-    public void onSuccess(T result) {
-      streamObserver.onNext(result);
-      streamObserver.onCompleted();
-    }
   }
 }

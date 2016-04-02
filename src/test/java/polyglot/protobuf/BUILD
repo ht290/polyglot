@@ -7,7 +7,7 @@ java_test(
   deps = [
     "//src/main/proto/testing/foo:foo_proto",
     "//src/main/proto/testing:test_service_proto",
-    "//src/main/java/polyglot:polyglot-lib",
+    "//src/main/java/polyglot/protobuf",
     "//third_party/protobuf",
     "//third_party/testing",
   ],

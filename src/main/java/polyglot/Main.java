@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 import java.util.logging.LogManager;
 
 import org.slf4j.Logger;
@@ -28,8 +29,11 @@ import com.google.protobuf.TextFormat;
 import com.google.protobuf.TextFormat.ParseException;
 
 import io.grpc.stub.StreamObserver;
-import polyglot.ProtocInvoker.ProtocInvocationException;
+import polyglot.grpc.DynamicGrpcClient;
 import polyglot.oauth2.RefreshTokenCredentials;
+import polyglot.protobuf.ProtocInvoker;
+import polyglot.protobuf.ServiceResolver;
+import polyglot.protobuf.ProtocInvoker.ProtocInvocationException;
 
 public class Main {
   private static final Logger logger = LoggerFactory.getLogger(Main.class);
@@ -71,7 +75,8 @@ public class Main {
 
     logger.info("Making rpc call to endpoint: " + arguments.endpoint());
     ImmutableList.Builder<DynamicMessage> responsesBuilder = ImmutableList.builder();
-    dynamicClient.call(requestMessage, new StreamObserver<DynamicMessage>() {
+
+    StreamObserver<DynamicMessage> streamObserver = new StreamObserver<DynamicMessage>() {
       @Override
       public void onNext(DynamicMessage response) {
         logger.info("Got rpc response: " + response);
@@ -87,7 +92,14 @@ public class Main {
       public void onCompleted() {
         logger.info("Rpc completed successfully");
       }
-    });
+    };
+
+    try {
+      dynamicClient.call(requestMessage, streamObserver).get();
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException("Caught exeception while waiting for rpc", e);
+    }
+
     ImmutableList<DynamicMessage> responses = responsesBuilder.build();
 
     if (arguments.outputPath().isPresent()) {
