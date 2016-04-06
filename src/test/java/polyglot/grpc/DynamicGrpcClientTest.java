@@ -1,21 +1,24 @@
 package polyglot.grpc;
 
+import static org.mockito.Mockito.when;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.stub.StreamObserver;
+
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.mockito.Matchers;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-import com.google.common.util.concurrent.ListeningExecutorService;
-import com.google.protobuf.Descriptors.MethodDescriptor;
-import com.google.protobuf.DynamicMessage;
-
-import io.grpc.Channel;
-import io.grpc.stub.StreamObserver;
 import polyglot.test.TestProto;
 import polyglot.test.TestProto.TestRequest;
 
+import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.protobuf.Descriptors.MethodDescriptor;
+import com.google.protobuf.DynamicMessage;
 
 /** Unit tests for {@link DynamicGrpcClient}. */
 public class DynamicGrpcClientTest {
@@ -44,11 +47,16 @@ public class DynamicGrpcClientTest {
   @Mock private Channel mockChannel;
   @Mock private ListeningExecutorService mockExecutor;
   @Mock private StreamObserver<DynamicMessage> mockStreamObserver;
+  @Mock private ClientCall<DynamicMessage, DynamicMessage> mockClientCall;
 
   private DynamicGrpcClient client;
 
   @Before
   public void setUp() {
+    when(mockChannel.newCall(
+        Matchers.<io.grpc.MethodDescriptor<DynamicMessage, DynamicMessage>>any(),
+        Matchers.any()))
+            .thenReturn(mockClientCall);
   }
 
   @Test

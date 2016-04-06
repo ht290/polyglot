@@ -36,7 +36,7 @@ public class RefreshTokenCredentials extends OAuth2Credentials {
   private final RefreshRequestFactory requestFactory;
 
   /** Create a new set of credentials for the given refresh token and oauth configuration. */
-  static RefreshTokenCredentials create(OauthConfig oauthConfig, String refreshTokenSecret) {
+  public static RefreshTokenCredentials create(OauthConfig oauthConfig, String refreshTokenSecret) {
     RefreshRequestFactory requestFactory = new RefreshRequestFactory();
     Clock clock = Clock.systemDefaultZone();
     return new RefreshTokenCredentials(requestFactory, refreshTokenSecret, oauthConfig, clock);

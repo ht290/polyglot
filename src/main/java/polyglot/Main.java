@@ -1,5 +1,7 @@
 package polyglot;
 
+import io.grpc.stub.StreamObserver;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -7,7 +9,6 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.logging.LogManager;
@@ -15,6 +16,12 @@ import java.util.logging.LogManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.bridge.SLF4JBridgeHandler;
+
+import polyglot.grpc.DynamicGrpcClient;
+import polyglot.oauth2.RefreshTokenCredentials;
+import polyglot.protobuf.ProtocInvoker;
+import polyglot.protobuf.ProtocInvoker.ProtocInvocationException;
+import polyglot.protobuf.ServiceResolver;
 
 import com.google.auth.Credentials;
 import com.google.common.base.Charsets;
@@ -27,13 +34,6 @@ import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.TextFormat;
 import com.google.protobuf.TextFormat.ParseException;
-
-import io.grpc.stub.StreamObserver;
-import polyglot.grpc.DynamicGrpcClient;
-import polyglot.oauth2.RefreshTokenCredentials;
-import polyglot.protobuf.ProtocInvoker;
-import polyglot.protobuf.ServiceResolver;
-import polyglot.protobuf.ProtocInvoker.ProtocInvocationException;
 
 public class Main {
   private static final Logger logger = LoggerFactory.getLogger(Main.class);
@@ -52,7 +52,8 @@ public class Main {
     }
 
     logger.info("Loading proto file descriptors");
-    FileDescriptorSet fileDescriptorSet = getFileDescriptorSet(arguments.protoRoot(), arguments.protocProtoPath());
+    FileDescriptorSet fileDescriptorSet =
+        getFileDescriptorSet(arguments.protoRoot(), arguments.protocProtoPath());
     ServiceResolver serviceResolver = ServiceResolver.fromFileDescriptorSet(fileDescriptorSet);
     MethodDescriptor methodDescriptor =
         serviceResolver.resolveServiceMethod(arguments.grpcMethodName());
@@ -60,10 +61,8 @@ public class Main {
     logger.info("Creating dynamic grpc client");
     DynamicGrpcClient dynamicClient;
     if (arguments.oauthConfig().isPresent()) {
-      Credentials credentials = new RefreshTokenCredentials(
-          arguments.oauth2RefreshToken(),
-          arguments.oauthConfig().get(),
-          Clock.systemDefaultZone());
+      Credentials credentials = RefreshTokenCredentials.create(
+          arguments.oauthConfig().get(), arguments.oauth2RefreshToken());
       dynamicClient = DynamicGrpcClient.createWithCredentials(
           methodDescriptor, arguments.endpoint(), arguments.useTls(), credentials);
     } else {

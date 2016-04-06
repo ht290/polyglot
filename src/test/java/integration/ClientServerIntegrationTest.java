@@ -28,6 +28,7 @@ import polyglot.test.TestProto.TestRequest;
 import polyglot.test.TestProto.TestResponse;
 import polyglot.test.TestServiceGrpc;
 import polyglot.test.TestServiceGrpc.TestService;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 /**
  * An integration test suite which has the Polyglot client talk to a server which records requests.
@@ -191,6 +192,16 @@ public class ClientServerIntegrationTest {
 
     public TestRequest getRequest(int index) {
       return recordedRequests.get(index);
+    }
+
+    @Override
+    public StreamObserver<TestRequest> testMethodBidi(StreamObserver<TestResponse> stream) {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public void testMethodStream(TestRequest request, StreamObserver<TestResponse> stream) {
+      throw new NotImplementedException();
     }
   }
 }
